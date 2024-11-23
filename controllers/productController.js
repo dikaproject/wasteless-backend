@@ -77,6 +77,7 @@ const productController = {
 
             // Validate required fields
             const { 
+                seller_id,
                 category_id, 
                 name, 
                 quantity, 
@@ -94,9 +95,10 @@ const productController = {
             // Insert product
             const [productResult] = await connection.query(`
                 INSERT INTO products 
-                (category_id, name, slug, quantity, massa, expired, is_active) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (seller_id, category_id, name, slug, quantity, massa, expired, is_active) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `, [
+                seller_id,
                 category_id, 
                 name, 
                 slug, 
@@ -120,6 +122,13 @@ const productController = {
                     'UPDATE products SET photo_id = ? WHERE id = ?',
                     [photoResult.insertId, productId]
                 );
+            }
+
+            // create prices for the product
+            const prices = JSON.parse(req.body.prices);
+            if (prices.length) {
+                const priceValues = prices.map(price => `(${productId}, ${price.price}, ${price.is_discount ? 1 : 0}, ${price.discount_percentage || 0}, ${price.discount_price || 0}, ${price.start_date ? `'${price.start_date}'` : null}, ${price.end_date ? `'${price.end_date}'` : null})`).join(',');
+                await connection.query(`INSERT INTO prices (product_id, price, is_discount, discount_percentage, discount_price, start_date, end_date) VALUES ${priceValues}`);
             }
 
             await connection.commit();
@@ -159,96 +168,212 @@ const productController = {
         }
     },
 
-    // Modified getDetail method
+        // Modified getDetail method
     getDetail: async (req, res) => {
         try {
             const { id } = req.params;
-
+    
             const [product] = await pool.query(`
-                SELECT p.*, c.name as category_name, ph.photo 
+                SELECT p.*, 
+                       c.name as category_name, 
+                       ph.photo,
+                       pr.id as price_id,
+                       pr.price,
+                       pr.is_discount,
+                       pr.discount_percentage,
+                       pr.discount_price,
+                       pr.start_date,
+                       pr.end_date
                 FROM products p 
                 LEFT JOIN categories c ON p.category_id = c.id 
                 LEFT JOIN photos ph ON p.photo_id = ph.id 
+                LEFT JOIN prices pr ON p.id = pr.product_id
                 WHERE p.id = ?
+                ORDER BY pr.created_at DESC
+                LIMIT 1
             `, [id]);
-
+    
             res.json({ success: true, data: product[0] });
         } catch (error) {
             res.status(500).json({ success: false, message: error.message });
         }
     },
-
-    // Modified update method
+    
+        // Modified update method with old photo cleanup
     update: async (req, res) => {
-        upload(req, res, async (err) => {
-            if (err) {
-                return res.status(400).json({ success: false, message: err.message });
-            }
-
-            try {
-                const { id } = req.params;
-                const {
-                    category_id,
-                    name,
-                    quantity,
-                    massa,
-                    expired,
-                    is_active
-                } = req.body;
-
-                const slug = slugify(name, { lower: true });
-
-                // If there's a new photo
-                if (req.file) {
-                    // Insert new photo
-                    await pool.query(`
-                        INSERT INTO photos (product_id, photo)
-                        VALUES (?, ?)
-                    `, [id, req.file.filename]);
-
-                    // Get the new photo_id
-                    const [photoResult] = await pool.query(
-                        'SELECT id FROM photos WHERE product_id = ? ORDER BY id DESC LIMIT 1',
-                        [id]
-                    );
-
-                    // Update product with all fields including new photo_id
-                    await pool.query(`
-                        UPDATE products 
-                        SET category_id = ?, name = ?, slug = ?, 
-                            quantity = ?, massa = ?, expired = ?, 
-                            is_active = ?, photo_id = ?
-                        WHERE id = ?
-                    `, [category_id, name, slug, quantity, massa, expired, is_active, photoResult[0].id, id]);
-                } else {
-                    // Update product without changing photo
-                    await pool.query(`
-                        UPDATE products 
-                        SET category_id = ?, name = ?, slug = ?, 
-                            quantity = ?, massa = ?, expired = ?, 
-                            is_active = ?
-                        WHERE id = ?
-                    `, [category_id, name, slug, quantity, massa, expired, is_active, id]);
+        const connection = await pool.getConnection();
+        
+        try {
+            await connection.beginTransaction();
+    
+            const { id } = req.params;
+    
+            // Get old photo info before updating
+            const [oldPhoto] = await connection.query(`
+                SELECT ph.id, ph.photo 
+                FROM products p
+                LEFT JOIN photos ph ON p.photo_id = ph.id
+                WHERE p.id = ?
+            `, [id]);
+    
+            // Handle file upload first
+            await new Promise((resolve, reject) => {
+                upload(req, res, (err) => {
+                    if (err) {
+                        reject(err);
+                    }
+                    resolve();
+                });
+            });
+    
+            const {
+                category_id,
+                name,
+                quantity,
+                massa,
+                expired,
+                is_active,
+                prices
+            } = req.body;
+    
+            const slug = slugify(name, { lower: true });
+    
+            // Update product
+            await connection.query(`
+                UPDATE products 
+                SET category_id = ?, 
+                    name = ?, 
+                    slug = ?, 
+                    quantity = ?, 
+                    massa = ?, 
+                    expired = ?, 
+                    is_active = ?
+                WHERE id = ?
+            `, [category_id, name, slug, quantity, massa, expired, is_active, id]);
+    
+            // Handle photo update if provided
+            if (req.file) {
+                const [photoResult] = await connection.query(`
+                    INSERT INTO photos (product_id, photo)
+                    VALUES (?, ?)
+                `, [id, req.file.filename]);
+    
+                await connection.query(
+                    'UPDATE products SET photo_id = ? WHERE id = ?',
+                    [photoResult.insertId, id]
+                );
+    
+                // Delete old photo if exists
+                if (oldPhoto[0]?.photo) {
+                    const fs = require('fs').promises;
+                    try {
+                        await fs.unlink(path.join('./uploads/products', oldPhoto[0].photo));
+                        // Delete old photo record from database
+                        await connection.query('DELETE FROM photos WHERE id = ?', [oldPhoto[0].id]);
+                    } catch (unlinkError) {
+                        console.error('Error removing old photo:', unlinkError);
+                    }
                 }
-
-                res.json({ success: true, message: 'Product updated successfully' });
-            } catch (error) {
-                res.status(500).json({ success: false, message: error.message });
             }
-        });
+    
+            // Update prices if provided
+            if (prices) {
+                const pricesArray = JSON.parse(prices);
+                if (pricesArray.length) {
+                    const priceValues = pricesArray.map(price => 
+                        `(${id}, ${price.price}, ${price.is_discount ? 1 : 0}, ${price.discount_percentage || 0}, ${price.discount_price || 0}, ${price.start_date ? `'${price.start_date}'` : null}, ${price.end_date ? `'${price.end_date}'` : null})`
+                    ).join(',');
+                    
+                    await connection.query(`INSERT INTO prices (product_id, price, is_discount, discount_percentage, discount_price, start_date, end_date) VALUES ${priceValues}`);
+                }
+            }
+    
+            await connection.commit();
+    
+            res.json({ 
+                success: true, 
+                message: 'Product updated successfully',
+                data: {
+                    id,
+                    photo: req.file ? req.file.filename : null
+                }
+            });
+    
+        } catch (error) {
+            await connection.rollback();
+            
+            // Handle file cleanup if upload succeeded but update failed
+            if (req.file) {
+                const fs = require('fs').promises;
+                try {
+                    await fs.unlink(path.join('./uploads/products', req.file.filename));
+                } catch (unlinkError) {
+                    console.error('Error removing uploaded file:', unlinkError);
+                }
+            }
+    
+            res.status(500).json({ 
+                success: false, 
+                message: error.message || 'Error updating product',
+                error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            });
+        } finally {
+            connection.release();
+        }
     },
 
-    // Modified delete method
+        // Modified delete method
     delete: async (req, res) => {
+        const connection = await pool.getConnection();
+        
         try {
+            await connection.beginTransaction();
+            
             const { id } = req.params;
-            // Delete associated photos first
-            await pool.query('DELETE FROM photos WHERE product_id = ?', [id]);
-            // Then delete the product
-            await pool.query('DELETE FROM products WHERE id = ?', [id]);
-            res.json({ success: true, message: 'Product deleted successfully' });
+    
+            // Get photo filename before deletion for cleanup
+            const [photos] = await connection.query(
+                'SELECT photo FROM photos WHERE product_id = ?', 
+                [id]
+            );
+    
+            // Delete prices first due to foreign key constraints
+            await connection.query('DELETE FROM prices WHERE product_id = ?', [id]);
+    
+            // Delete photos from database
+            await connection.query('DELETE FROM photos WHERE product_id = ?', [id]);
+    
+            // Delete the product
+            await connection.query('DELETE FROM products WHERE id = ?', [id]);
+    
+            await connection.commit();
+    
+            // Clean up photo files from storage
+            if (photos.length) {
+                const fs = require('fs').promises;
+                await Promise.all(photos.map(async (photo) => {
+                    try {
+                        await fs.unlink(path.join('./uploads/products', photo.photo));
+                    } catch (unlinkError) {
+                        console.error('Error removing photo file:', unlinkError);
+                    }
+                }));
+            }
+    
+            res.json({ 
+                success: true, 
+                message: 'Product and all related data deleted successfully' 
+            });
+    
         } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            await connection.rollback();
+            res.status(500).json({ 
+                success: false, 
+                message: error.message || 'Error deleting product',
+                error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            });
+        } finally {
+            connection.release();
         }
     }
 };
