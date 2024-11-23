@@ -3,6 +3,7 @@ const router = express.Router();
 const { auth, checkRole } = require('../middleware/auth');
 const { productController } = require('../controllers/productController');
 const { categoryController } = require('../controllers/categoryController');
+const { usersController } = require('../controllers/usersController');
 
 
 router.use(auth);
@@ -47,6 +48,13 @@ router.post('/products', productController.create);
 router.put('/products/:id', productController.update);
 router.get('/products/:id', productController.getDetail);
 router.delete('/products/:id', productController.delete);
+
+// User routes
+router.get('/users', usersController.getAll);
+router.post('/users', usersController.create);
+router.put('/users/:id', usersController.update);
+router.get('/users/:id', usersController.getById);
+router.delete('/users/:id', usersController.delete);
 
 // Orders Management
 router.get('/orders', async (req, res) => {
