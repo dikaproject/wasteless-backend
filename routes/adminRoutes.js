@@ -53,9 +53,9 @@ router.delete('/products/:id', productController.delete);
 router.get('/users', usersController.getAll);
 router.post('/users', usersController.create);
 router.put('/users/:id', usersController.update);
-router.get('/users/:id', usersController.getById);
+router.get('/users/:id', usersController.getDetail);
 router.delete('/users/:id', usersController.delete);
-
+router.put('/users/reset/:id', usersController.resetPassword);
 // Orders Management
 router.get('/orders', async (req, res) => {
     try {

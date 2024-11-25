@@ -198,17 +198,15 @@ const productController = {
             res.status(500).json({ success: false, message: error.message });
         }
     },
-    
-        // Modified update method with old photo cleanup
+        // Optimized update method
     update: async (req, res) => {
         const connection = await pool.getConnection();
-        
         try {
             await connection.beginTransaction();
     
             const { id } = req.params;
     
-            // Get old photo info before updating
+            // Get old photo info
             const [oldPhoto] = await connection.query(`
                 SELECT ph.id, ph.photo 
                 FROM products p
@@ -216,13 +214,11 @@ const productController = {
                 WHERE p.id = ?
             `, [id]);
     
-            // Handle file upload first
+            // Handle file upload
             await new Promise((resolve, reject) => {
                 upload(req, res, (err) => {
-                    if (err) {
-                        reject(err);
-                    }
-                    resolve();
+                    if (err) reject(err);
+                    else resolve();
                 });
             });
     
@@ -251,40 +247,51 @@ const productController = {
                 WHERE id = ?
             `, [category_id, name, slug, quantity, massa, expired, is_active, id]);
     
-            // Handle photo update if provided
+            // Update photo if provided
             if (req.file) {
+                // Insert new photo
                 const [photoResult] = await connection.query(`
                     INSERT INTO photos (product_id, photo)
                     VALUES (?, ?)
                 `, [id, req.file.filename]);
     
+                // Update product's photo_id
                 await connection.query(
                     'UPDATE products SET photo_id = ? WHERE id = ?',
                     [photoResult.insertId, id]
                 );
     
-                // Delete old photo if exists
+                // Delete old photo file and record
                 if (oldPhoto[0]?.photo) {
                     const fs = require('fs').promises;
                     try {
                         await fs.unlink(path.join('./uploads/products', oldPhoto[0].photo));
-                        // Delete old photo record from database
                         await connection.query('DELETE FROM photos WHERE id = ?', [oldPhoto[0].id]);
-                    } catch (unlinkError) {
-                        console.error('Error removing old photo:', unlinkError);
+                    } catch (err) {
+                        console.error('Error deleting old photo:', err);
                     }
                 }
             }
     
-            // Update prices if provided
+            // Update prices
             if (prices) {
                 const pricesArray = JSON.parse(prices);
                 if (pricesArray.length) {
+                    // Delete old prices
+                    await connection.query('DELETE FROM prices WHERE product_id = ?', [id]);
+    
+                    // Insert new prices
                     const priceValues = pricesArray.map(price => 
-                        `(${id}, ${price.price}, ${price.is_discount ? 1 : 0}, ${price.discount_percentage || 0}, ${price.discount_price || 0}, ${price.start_date ? `'${price.start_date}'` : null}, ${price.end_date ? `'${price.end_date}'` : null})`
+                        `(${id}, ${price.price}, ${price.is_discount ? 1 : 0}, ${price.discount_percentage || 0}, ${price.discount_price || 0}, ${
+                            price.start_date ? `'${price.start_date}'` : null
+                        }, ${price.end_date ? `'${price.end_date}'` : null})`
                     ).join(',');
-                    
-                    await connection.query(`INSERT INTO prices (product_id, price, is_discount, discount_percentage, discount_price, start_date, end_date) VALUES ${priceValues}`);
+    
+                    await connection.query(`
+                        INSERT INTO prices 
+                        (product_id, price, is_discount, discount_percentage, discount_price, start_date, end_date) 
+                        VALUES ${priceValues}
+                    `);
                 }
             }
     
@@ -301,17 +308,14 @@ const productController = {
     
         } catch (error) {
             await connection.rollback();
-            
-            // Handle file cleanup if upload succeeded but update failed
             if (req.file) {
                 const fs = require('fs').promises;
                 try {
                     await fs.unlink(path.join('./uploads/products', req.file.filename));
-                } catch (unlinkError) {
-                    console.error('Error removing uploaded file:', unlinkError);
+                } catch (err) {
+                    console.error('Error removing uploaded file:', err);
                 }
             }
-    
             res.status(500).json({ 
                 success: false, 
                 message: error.message || 'Error updating product',
@@ -321,48 +325,47 @@ const productController = {
             connection.release();
         }
     },
-
-        // Modified delete method
+    
+    // Optimized delete method
     delete: async (req, res) => {
         const connection = await pool.getConnection();
-        
         try {
             await connection.beginTransaction();
-            
+    
             const { id } = req.params;
     
-            // Get photo filename before deletion for cleanup
+            // Get photo filenames
             const [photos] = await connection.query(
                 'SELECT photo FROM photos WHERE product_id = ?', 
                 [id]
             );
     
-            // Delete prices first due to foreign key constraints
+            // Delete prices
             await connection.query('DELETE FROM prices WHERE product_id = ?', [id]);
     
             // Delete photos from database
             await connection.query('DELETE FROM photos WHERE product_id = ?', [id]);
     
-            // Delete the product
+            // Delete product
             await connection.query('DELETE FROM products WHERE id = ?', [id]);
     
             await connection.commit();
     
-            // Clean up photo files from storage
+            // Delete photo files
             if (photos.length) {
                 const fs = require('fs').promises;
-                await Promise.all(photos.map(async (photo) => {
+                for (const photo of photos) {
                     try {
                         await fs.unlink(path.join('./uploads/products', photo.photo));
-                    } catch (unlinkError) {
-                        console.error('Error removing photo file:', unlinkError);
+                    } catch (err) {
+                        console.error('Error deleting photo file:', err);
                     }
-                }));
+                }
             }
     
             res.json({ 
                 success: true, 
-                message: 'Product and all related data deleted successfully' 
+                message: 'Product and related data deleted successfully' 
             });
     
         } catch (error) {
