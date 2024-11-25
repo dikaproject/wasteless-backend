@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
+const schedule = require('node-schedule');
+const { updateExpiredProducts } = require('./scripts/scheduler');
 
 const app = express();
 
@@ -14,6 +16,10 @@ app.use('/api/uploads', express.static('uploads'));
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/seller', require('./routes/sellerRoutes'));
+
+schedule.scheduleJob('0 0 * * *', () => {
+    updateExpiredProducts();
+});
 
 const PORT = process.env.PORT || 5000;
 
