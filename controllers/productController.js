@@ -58,6 +58,36 @@ const productController = {
         }
     },
 
+    getAllDetailed: async (req, res) => {
+        try {
+            const [products] = await pool.query(`
+                SELECT 
+                    p.*, 
+                    c.name AS category_name, 
+                    ph.photo, 
+                    pr.price, 
+                    pr.is_discount, 
+                    pr.discount_percentage, 
+                    pr.discount_price, 
+                    pr.start_date, 
+                    pr.end_date
+                FROM products p
+                LEFT JOIN categories c ON p.category_id = c.id
+                LEFT JOIN photos ph ON p.photo_id = ph.id
+                LEFT JOIN prices pr ON p.id = pr.product_id
+                WHERE p.is_active = 1
+                ORDER BY p.created_at DESC
+            `);
+
+            res.json({
+                success: true,
+                data: products
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    },
+
     create: async (req, res) => {
         // Wrap everything in a transaction
         const connection = await pool.getConnection();

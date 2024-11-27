@@ -67,17 +67,54 @@ CREATE TABLE prices (
 CREATE TABLE transactions (
     id INT PRIMARY KEY AUTO_INCREMENT,
     user_id INT NOT NULL,
-    product_id INT NOT NULL,
-    price_id INT NOT NULL,
-    quantity INT NOT NULL,
     total_amount INT NOT NULL,
+    payment_method ENUM('cod', 'midtrans') NOT NULL,
+    payment_status ENUM('pending', 'paid', 'failed') DEFAULT 'pending',
     status ENUM('pending', 'paid', 'shipped', 'delivered', 'cancelled') DEFAULT 'pending',
+    midtrans_order_id VARCHAR(100) DEFAULT NULL,
+    midtrans_transaction_id VARCHAR(100) DEFAULT NULL,
+    midtrans_status_code VARCHAR(10) DEFAULT NULL,
+    midtrans_transaction_status VARCHAR(50) DEFAULT NULL,
+    midtrans_fraud_status VARCHAR(20) DEFAULT NULL,
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE transaction_items (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    transaction_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL,
+    price INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+-- Carts table
+CREATE TABLE carts (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (product_id) REFERENCES products(id),
-    FOREIGN KEY (price_id) REFERENCES prices(id)
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- Cart Items table
+CREATE TABLE cart_items (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    cart_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+
+-- Ensure a product is only added once per cart
+ALTER TABLE cart_items
+ADD UNIQUE KEY unique_cart_product (cart_id, product_id);
 
 -- Add indexes for better performance
 CREATE INDEX idx_product_seller ON products(seller_id);

@@ -14,7 +14,7 @@ const logStream = fs.createWriteStream(path.join(logsDir, 'scheduler.log'), { fl
 function log(message) {
     const timestamp = new Date().toISOString();
     logStream.write(`[${timestamp}] ${message}\n`);
-}
+} 
 
 // Function to update expired products
 async function updateExpiredProducts() {

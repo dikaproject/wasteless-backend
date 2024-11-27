@@ -145,13 +145,13 @@ const authController = {
         [user.id]
       );
   
-      // Generate token
+
       const token = jwt.sign({
-        userId: user.id,
-        email: user.email,
-        role: user.role || 'user'
+          userId: user.id,
+          email: user.email,
+          role: user.role || 'user'
       }, process.env.JWT_SECRET, {
-        expiresIn: '1h'
+          expiresIn: '1h'
       });
   
       // Prepare user data

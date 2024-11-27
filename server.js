@@ -3,6 +3,7 @@ const cors = require('cors');
 require('dotenv').config();
 const schedule = require('node-schedule');
 const { updateExpiredProducts } = require('./scripts/scheduler');
+const transactionRoutes = require('./routes/transactionRoutes');
 
 const app = express();
 
@@ -16,6 +17,10 @@ app.use('/api/uploads', express.static('uploads'));
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/seller', require('./routes/sellerRoutes'));
+app.use('/api', transactionRoutes);
+app.use('/api', require('./routes/productRoutes'));
+app.use('/api', require('./routes/cartRoutes'));
+app.use('/api', require('./routes/addressRoutes'));
 
 schedule.scheduleJob('0 0 * * *', () => {
     updateExpiredProducts();
