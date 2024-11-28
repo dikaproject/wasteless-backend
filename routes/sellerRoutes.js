@@ -1,200 +1,58 @@
 // routes/sellerRoutes.js
 const express = require('express');
 const router = express.Router();
+const pool = require('../config/database');
 const { auth, checkRole } = require('../middleware/auth');
+const { sellerProductController } = require('../controllers/sellerProductController');
+const { categoryController } = require('../controllers/categoryController');
+const { sellerOrderController } = require('../controllers/sellerOrderController');
 
 // Apply middleware to all seller routes
 router.use(auth);
 router.use(checkRole(['seller']));
 
-router.get('/seller', async (req, res) => {
-    try {
-        const sellerId = req.userData.userId;
-        
-        // Get seller-specific overview statistics
-        const stats = {
-            totalOrders: 0, 
-            totalProducts: 0,
-            totalRevenue: 0,
-            recentOrders: [],
-            topProducts: []
-        };
+// Seller dashboard stats
+router.get('/dashboard', async (req, res) => {
+  try {
+    const sellerId = req.userData.userId;
+    const [products] = await pool.query(
+      'SELECT COUNT(*) as total FROM products WHERE seller_id = ?',
+      [sellerId]
+    );
+    const [pendingProducts] = await pool.query(
+      'SELECT COUNT(*) as pending FROM products WHERE seller_id = ? AND is_active = 0',
+      [sellerId]
+    );
+    const [activeProducts] = await pool.query(
+      'SELECT COUNT(*) as active FROM products WHERE seller_id = ? AND is_active = 1',
+      [sellerId]
+    );
 
-        res.json({
-            success: true,
-            data: stats
-        });
-    } catch (error) {
-        console.error('Seller Dashboard Error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching dashboard data'
-        });
-    }
+    res.json({
+      success: true,
+      data: {
+        totalProducts: products[0].total,
+        pendingProducts: pendingProducts[0].pending,
+        activeProducts: activeProducts[0].active
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
-// Products Management
-router.get('/products', async (req, res) => {
-    try {
-        const sellerId = req.userData.userId;
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        
-        // Implement pagination and filtering for seller's products
-        const products = []; // Get from database
-        
-        res.json({
-            success: true,
-            data: products,
-            pagination: {
-                page,
-                limit,
-                total: 0 // Total count from DB
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching products'
-        });
-    }
-});
+// Product routes
+router.get('/products', sellerProductController.getAll);
+router.post('/products', sellerProductController.create);
+router.put('/products/:id', sellerProductController.update);
+router.delete('/products/:id', sellerProductController.delete);
 
-router.post('/products', async (req, res) => {
-    try {
-        const sellerId = req.userData.userId;
-        const productData = {
-            ...req.body,
-            sellerId
-        };
-        // Implement product creation logic
-        
-        res.status(201).json({
-            success: true,
-            message: 'Product created successfully'
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error creating product'
-        });
-    }
-});
+// categoriest fecth get all
+router.get('/categories', categoryController.getAll);
 
-router.put('/products/:id', async (req, res) => {
-    try {
-        const sellerId = req.userData.userId;
-        const { id } = req.params;
-        const updateData = req.body;
-        
-        // Verify product belongs to seller
-        // Implement product update logic
-        
-        res.json({
-            success: true,
-            message: 'Product updated successfully'
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error updating product'
-        });
-    }
-});
 
-router.delete('/products/:id', async (req, res) => {
-    try {
-        const sellerId = req.userData.userId;
-        const { id } = req.params;
-        
-        // Verify product belongs to seller
-        // Implement product deletion logic
-        
-        res.json({
-            success: true,
-            message: 'Product deleted successfully'
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error deleting product'
-        });
-    }
-});
-
-// Orders Management
-router.get('/orders', async (req, res) => {
-    try {
-        const sellerId = req.userData.userId;
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        
-        // Implement pagination and filtering for seller's orders
-        const orders = []; // Get from database
-        
-        res.json({
-            success: true,
-            data: orders,
-            pagination: {
-                page,
-                limit,
-                total: 0 // Total count from DB
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching orders'
-        });
-    }
-});
-
-router.put('/orders/:id', async (req, res) => {
-    try {
-        const sellerId = req.userData.userId;
-        const { id } = req.params;
-        const { status } = req.body;
-        
-        // Verify order belongs to seller
-        // Implement order status update logic
-        
-        res.json({
-            success: true,
-            message: 'Order status updated successfully'
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error updating order status'
-        });
-    }
-});
-
-// Analytics
-router.get('/analytics', async (req, res) => {
-    try {
-        const sellerId = req.userData.userId;
-        const startDate = req.query.startDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const endDate = req.query.endDate || new Date();
-        
-        // Implement seller-specific analytics
-        const analyticsData = {
-            salesOverTime: [],
-            topProducts: [],
-            orderStats: {},
-            revenueStats: {}
-        };
-        
-        res.json({
-            success: true,
-            data: analyticsData
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error fetching analytics data'
-        });
-    }
-});
+// Order routes
+router.get('/orders', sellerOrderController.getAll);
+router.put('/orders/:id/status', sellerOrderController.updateStatus);
 
 module.exports = router;
