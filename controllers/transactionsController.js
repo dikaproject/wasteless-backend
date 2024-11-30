@@ -37,7 +37,7 @@ const transactionsController = {
       if (address.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Please add delivery address first',
+          message: 'Please add address first',
           needAddress: true
         });
       }
@@ -66,7 +66,7 @@ const transactionsController = {
         throw new Error('Cart is empty');
       }
 
-      // Calculate total
+      // Calculate subtotal
       let subtotal = 0;
       for (const item of cartItems) {
         if (item.quantity > item.stock_quantity) {
@@ -76,15 +76,18 @@ const transactionsController = {
         subtotal += itemPrice * item.quantity;
       }
 
-      const delivery_cost = 15000;
-      const total_amount = subtotal + delivery_cost;
+      // Calculate PPN (0.7% of subtotal)
+      const ppn = Math.round(subtotal * 0.007);
+
+      // Total amount
+      const total_amount = subtotal + ppn;
 
       // Create transaction
       const [transactionResult] = await connection.query(
         `INSERT INTO transactions 
-         (user_id, total_amount, delivery_cost, payment_method, address_id)
+         (user_id, total_amount, ppn, payment_method, address_id)
          VALUES (?, ?, ?, ?, ?)`,
-        [userId, total_amount, delivery_cost, payment_method, address[0].id]
+        [userId, total_amount, ppn, payment_method, address[0].id]
       );
 
       const transactionId = transactionResult.insertId;
@@ -128,20 +131,12 @@ const transactionsController = {
             email: userDetails[0].email,
             first_name: userDetails[0].name,
           },
-          item_details: [
-            ...cartItems.map(item => ({
-              id: item.product_id,
-              price: item.is_discount ? item.discount_price : item.price,
-              quantity: item.quantity,
-              name: item.name,
-            })),
-            {
-              id: 'DELIVERY',
-              price: delivery_cost,
-              quantity: 1,
-              name: 'Delivery Cost'
-            }
-          ],
+          item_details: cartItems.map(item => ({
+            id: item.product_id.toString(),
+            price: item.is_discount ? item.discount_price : item.price,
+            quantity: item.quantity,
+            name: item.name.substring(0, 50), // Midtrans limits name to 50 chars
+          })),
         };
 
         const midtransTransaction = await snap.createTransaction(parameter);
@@ -304,7 +299,7 @@ const transactionsController = {
       const response = {
         id: transaction[0].id,
         total_amount: transaction[0].total_amount,
-        delivery_cost: transaction[0].delivery_cost,
+        ppn: transaction[0].ppn,
         payment_method: transaction[0].payment_method,
         payment_status: transaction[0].payment_status,
         status: transaction[0].status,

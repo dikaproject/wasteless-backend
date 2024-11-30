@@ -9,7 +9,7 @@ const { sellerOrderController } = require('../controllers/sellerOrderController'
 
 // Apply middleware to all seller routes
 router.use(auth);
-router.use(checkRole(['seller']));
+router.use(checkRole(['seller'], true));
 
 // Seller dashboard stats
 router.get('/dashboard', async (req, res) => {

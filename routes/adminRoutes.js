@@ -198,6 +198,37 @@ router.put('/seller-products/:id/approve', async (req, res) => {
   }
 });
 
+
+router.get('/pending-sellers', async (req, res) => {
+  try {
+    const [sellers] = await pool.query(
+      `SELECT u.id, u.name, u.email, u.phone, a.photo_ktp, a.photo_usaha
+       FROM users u
+       JOIN address a ON u.id = a.user_id
+       WHERE u.role = 'seller' AND u.is_active = FALSE`
+    );
+
+    res.json({ success: true, data: sellers });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.put('/approve-seller/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    await pool.query(
+      `UPDATE users SET is_active = TRUE WHERE id = ?`,
+      [id]
+    );
+
+    res.json({ success: true, message: 'Seller approved successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 router.put('/seller-products/:id/reject', async (req, res) => {
     const connection = await pool.getConnection();
     try {

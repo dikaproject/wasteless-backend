@@ -130,6 +130,8 @@ CREATE TABLE `address` (
   `kecamatan` varchar(100) DEFAULT NULL,
   `address` varchar(255) DEFAULT NULL,
   `code_pos` int DEFAULT NULL
+  `photo_ktp` varchar(255) DEFAULT NULL,
+  `photo_usaha` varchar(255) DEFAULT NULL,
 );
 
 ALTER TABLE `address`

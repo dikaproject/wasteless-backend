@@ -1,52 +1,90 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const pool = require("../config/database");
+const upload = require("../config/multer"); 
+const fs = require('fs').promises;
+const path = require('path');
 
 const authController = {
   register: async (req, res) => {
+    const connection = await pool.getConnection();
     try {
-      const { name, email, password, role, phone } = req.body;
-
-      // Validate phone number
-      if (!phone || !/^[0-9]{10,13}$/.test(phone)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid phone number",
-        });
-      }
-
-      const hashedPassword = await bcrypt.hash(password, 10);
-
-      const connection = await pool.getConnection();
       await connection.beginTransaction();
 
-      try {
-        const [userResult] = await connection.query(
-          "INSERT INTO users (name, email, password, role, phone) VALUES (?, ?, ?, ?, ?)",
-          [name, email, hashedPassword, role, phone]
-        );
-
-        await connection.query("INSERT INTO address (user_id) VALUES (?)", [
-          userResult.insertId,
-        ]);
-
-        await connection.commit();
-
-        res.status(201).json({
-          success: true,
-          message: "User registered successfully",
+      // Handle file uploads
+      await new Promise((resolve, reject) => {
+        upload.fields([
+          { name: 'photo_ktp', maxCount: 1 },
+          { name: 'photo_usaha', maxCount: 1 },
+        ])(req, res, (err) => {
+          if (err) {
+            reject(err);
+          }
+          resolve();
         });
-      } catch (error) {
-        await connection.rollback();
-        throw error;
-      } finally {
-        connection.release();
+      });
+
+      const { name, email, password, role, phone } = req.body;
+      const isSeller = role === 'seller';
+
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Set is_active to false for sellers
+      const isActive = isSeller ? false : true;
+
+      const [userResult] = await connection.query(
+        "INSERT INTO users (name, email, password, role, phone, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+        [name, email, hashedPassword, role, phone, isActive]
+      );
+
+      const userId = userResult.insertId;
+
+      // Insert into address
+      const addressData = [userId];
+
+      let addressQuery = "INSERT INTO address (user_id";
+      let addressValues = " VALUES (?";
+
+      if (isSeller) {
+        // Save file paths
+        const photoKtp = req.files['photo_ktp'] ? req.files['photo_ktp'][0].filename : null;
+        const photoUsaha = req.files['photo_usaha'] ? req.files['photo_usaha'][0].filename : null;
+
+        addressQuery += ", photo_ktp, photo_usaha";
+        addressValues += ", ?, ?";
+        addressData.push(photoKtp, photoUsaha);
       }
+
+      addressQuery += ")";
+      addressValues += ")";
+      const finalAddressQuery = addressQuery + addressValues;
+
+      await connection.query(finalAddressQuery, addressData);
+
+      await connection.commit();
+
+      res.status(201).json({
+        success: true,
+        message: isSeller ? 'Seller registered successfully, pending approval' : 'User registered successfully',
+      });
     } catch (error) {
+      await connection.rollback();
+
+      // Delete uploaded files if any
+      if (req.files) {
+        for (const key in req.files) {
+          const file = req.files[key][0];
+          await fs.unlink(path.join('./uploads', file.filename)).catch((err) => console.error('Error deleting file:', err));
+        }
+      }
+
       res.status(500).json({
         success: false,
         message: error.message,
       });
+    } finally {
+      connection.release();
     }
   },
 
@@ -147,27 +185,29 @@ const authController = {
   
 
       const token = jwt.sign({
-          userId: user.id,
-          email: user.email,
-          role: user.role || 'user'
+        userId: user.id,
+        email: user.email,
+        role: user.role || 'user',
+        isActive: user.is_active,
       }, process.env.JWT_SECRET, {
-          expiresIn: '1h'
+        expiresIn: '1h',
       });
-  
+    
       // Prepare user data
       const userData = {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role || 'user',
-        has_address: addressRows[0].address_count > 0
+        has_address: addressRows[0].address_count > 0,
+        isActive: user.is_active,
       };
-  
+    
       res.status(200).json({
         success: true,
         message: 'Authentication successful',
         token: token,
-        user: userData
+        user: userData,
       });
   
     } catch (error) {

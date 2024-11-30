@@ -109,6 +109,9 @@ const sellerProductController = {
   // Update create method in sellerProductController.js
   create: async (req, res) => {
     const connection = await pool.getConnection();
+    if (!req.userData.isActive) {
+      return res.status(403).json({ message: 'Your account is not activated yet' });
+    }
 
     try {
       await connection.beginTransaction();
