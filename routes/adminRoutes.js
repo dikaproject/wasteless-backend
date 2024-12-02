@@ -229,6 +229,72 @@ router.put('/approve-seller/:id', async (req, res) => {
   }
 });
 
+
+router.delete('/reject-seller/:id', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    // Get seller details before deletion
+    const [seller] = await connection.query(
+      'SELECT email, name, photo_ktp, photo_usaha FROM users u JOIN address a ON u.id = a.user_id WHERE u.id = ?',
+      [id]
+    );
+
+    if (seller.length === 0) {
+      throw new Error('Seller not found');
+    }
+
+    // Delete photos if they exist
+    if (seller[0].photo_ktp) {
+      try {
+        await fs.unlink(path.join('./uploads/ktp', seller[0].photo_ktp));
+      } catch (err) {
+        console.error('Error deleting KTP photo:', err);
+      }
+    }
+
+    if (seller[0].photo_usaha) {
+      try {
+        await fs.unlink(path.join('./uploads/usaha', seller[0].photo_usaha));
+      } catch (err) {
+        console.error('Error deleting business photo:', err);
+      }
+    }
+
+    // Delete address first due to foreign key constraint
+    await connection.query('DELETE FROM address WHERE user_id = ?', [id]);
+
+    // Delete user
+    await connection.query('DELETE FROM users WHERE id = ?', [id]);
+
+    // Send rejection email
+    await transporter.sendMail({
+      from: process.env.MAIL_FROM,
+      to: seller[0].email,
+      subject: 'Seller Application Rejected',
+      html: `
+        <h1>Application Rejected</h1>
+        <p>Hello ${seller[0].name},</p>
+        <p>We regret to inform you that your seller application has been rejected.</p>
+        <p>Reason: ${reason}</p>
+      `
+    });
+
+    await connection.commit();
+    res.json({ success: true, message: 'Seller rejected successfully' });
+
+  } catch (error) {
+    await connection.rollback();
+    res.status(500).json({ success: false, message: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
 router.put('/seller-products/:id/reject', async (req, res) => {
     const connection = await pool.getConnection();
     try {

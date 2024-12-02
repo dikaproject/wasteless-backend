@@ -60,7 +60,20 @@ const productController = {
 
     getAllDetailed: async (req, res) => {
         try {
-            const [products] = await pool.query(`
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 12;
+            const offset = (page - 1) * limit;
+            const category = req.query.category;
+            const province = req.query.province;
+            const kabupaten = req.query.kabupaten;
+            const kecamatan = req.query.kecamatan;
+            const minPrice = parseInt(req.query.minPrice) || 0;
+            const maxPrice = parseInt(req.query.maxPrice);
+            const showExpired = req.query.showExpired === 'true';
+            const onlyDiscounted = req.query.onlyDiscounted === 'true';
+            const sort = req.query.sort || 'latest';
+    
+            let query = `
                 SELECT 
                     p.*, 
                     c.name AS category_name, 
@@ -70,23 +83,96 @@ const productController = {
                     pr.discount_percentage, 
                     pr.discount_price, 
                     pr.start_date, 
-                    pr.end_date
+                    pr.end_date,
+                    a.province,
+                    a.kabupaten,
+                    a.kecamatan,
+                    COUNT(*) OVER() as total_count
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN photos ph ON p.photo_id = ph.id
                 LEFT JOIN prices pr ON p.id = pr.product_id
+                LEFT JOIN users u ON p.seller_id = u.id
+                LEFT JOIN address a ON u.id = a.user_id
                 WHERE p.is_active = 1
-                ORDER BY p.created_at DESC
-            `);
+            `;
+    
+            const queryParams = [];
+    
+            if (category && category !== 'All') {
+                query += ` AND c.name = ?`;
+                queryParams.push(category);
+            }
+    
+            if (province) {
+                query += ` AND a.province = ?`;
+                queryParams.push(province);
+            }
+    
+            if (kabupaten) {
+                query += ` AND a.kabupaten = ?`;
+                queryParams.push(kabupaten);
+            }
+    
+            if (kecamatan) {
+                query += ` AND a.kecamatan = ?`;
+                queryParams.push(kecamatan);
+            }
 
-            res.json({
-                success: true,
-                data: products
-            });
-        } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
+            if (!showExpired) {
+                query += ` AND p.expired > NOW()`;
+            }
+    
+            if (onlyDiscounted) {
+                query += ` AND pr.is_discount = 1`;
+            }
+    
+            if (minPrice) {
+                query += ` AND (pr.discount_price > ? OR (pr.discount_price IS NULL AND pr.price > ?))`;
+                queryParams.push(minPrice, minPrice);
+            }
+    
+            if (maxPrice) {
+                query += ` AND (pr.discount_price < ? OR (pr.discount_price IS NULL AND pr.price < ?))`;
+                queryParams.push(maxPrice, maxPrice);
+            }
+    
+            // Add sorting
+            query += ` ORDER BY `;
+        switch (sort) {
+            case 'price_asc':
+                query += `COALESCE(pr.discount_price, pr.price) ASC`;
+                break;
+            case 'price_desc':
+                query += `COALESCE(pr.discount_price, pr.price) DESC`;
+                break;
+            default:
+                query += `p.created_at DESC`;
         }
-    },
+
+        query += ` LIMIT ? OFFSET ?`;
+        queryParams.push(limit, offset);
+
+        const [products] = await pool.query(query, queryParams);
+        
+        const total = products[0]?.total_count || 0;
+
+        res.json({
+            success: true,
+            data: {
+                products: products.map(p => ({...p, total_count: undefined})),
+                pagination: {
+                    page,
+                    limit,
+                    total,
+                    totalPages: Math.ceil(total / limit)
+                }
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+},
 
     create: async (req, res) => {
         // Wrap everything in a transaction

@@ -70,7 +70,7 @@ CREATE TABLE transactions (
     total_amount INT NOT NULL,
     payment_method ENUM('cod', 'midtrans') NOT NULL,
     payment_status ENUM('pending', 'paid', 'failed') DEFAULT 'pending',
-    status ENUM('pending', 'paid', 'shipped', 'delivered', 'cancelled') DEFAULT 'pending',
+    status ENUM('pending', 'paid', 'delivered', 'cancelled') DEFAULT 'pending',
     midtrans_order_id VARCHAR(100) DEFAULT NULL,
     midtrans_transaction_id VARCHAR(100) DEFAULT NULL,
     midtrans_status_code VARCHAR(10) DEFAULT NULL,
@@ -78,6 +78,7 @@ CREATE TABLE transactions (
     midtrans_fraud_status VARCHAR(20) DEFAULT NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    ppn INT DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
@@ -126,12 +127,13 @@ CREATE INDEX idx_transaction_status ON transactions(status);
 CREATE TABLE `address` (
   `id` INT PRIMARY KEY AUTO_INCREMENT,
   `user_id` int NOT NULL,
+  `province` varchar(100) DEFAULT NULL,
   `kabupaten` varchar(100) DEFAULT NULL,
   `kecamatan` varchar(100) DEFAULT NULL,
   `address` varchar(255) DEFAULT NULL,
-  `code_pos` int DEFAULT NULL
+  `code_pos` int DEFAULT NULL,
   `photo_ktp` varchar(255) DEFAULT NULL,
-  `photo_usaha` varchar(255) DEFAULT NULL,
+  `photo_usaha` varchar(255) DEFAULT NULL
 );
 
 ALTER TABLE `address`
