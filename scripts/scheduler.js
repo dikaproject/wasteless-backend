@@ -19,7 +19,7 @@ function log(message) {
 // Function to update expired products
 async function updateExpiredProducts() {
     const connection = await pool.getConnection();
-    let result; // Declare result here to ensure it's accessible in the entire function
+    let result;
     try {
         await connection.beginTransaction();
 
@@ -35,14 +35,16 @@ async function updateExpiredProducts() {
         const pupukCategoryId = pupukCategory[0].id;
         const currentDate = new Date();
 
-        // Update products that have expired
+        // Update expired products EXCEPT those already in Pupuk category
         [result] = await connection.query(
             `
             UPDATE products 
             SET is_active = 0, category_id = ?, updated_at = NOW()
-            WHERE expired <= ? AND is_active = 1
+            WHERE expired <= ? 
+            AND is_active = 1
+            AND category_id != ?  /* Add this condition */
             `,
-            [pupukCategoryId, currentDate]
+            [pupukCategoryId, currentDate, pupukCategoryId]
         );
 
         await connection.commit();
@@ -60,5 +62,4 @@ async function updateExpiredProducts() {
     }
 }
 
-// Run the function
-updateExpiredProducts();
+module.exports = updateExpiredProducts;

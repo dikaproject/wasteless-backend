@@ -9,6 +9,8 @@ router.get('/cart', auth, cartController.getCart);
 // Add item to cart
 router.post('/cart', auth, cartController.addToCart);
 
+router.get('/cart/details', auth, cartController.getCartWithSellerDetails);
+
 // Update cart item quantity
 router.put('/cart/item/:productId', auth, cartController.updateCartItem);
 

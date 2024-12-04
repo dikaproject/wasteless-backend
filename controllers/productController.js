@@ -74,28 +74,31 @@ const productController = {
             const sort = req.query.sort || 'latest';
     
             let query = `
-                SELECT 
-                    p.*, 
-                    c.name AS category_name, 
-                    ph.photo, 
-                    pr.price, 
-                    pr.is_discount, 
-                    pr.discount_percentage, 
-                    pr.discount_price, 
-                    pr.start_date, 
-                    pr.end_date,
-                    a.province,
-                    a.kabupaten,
-                    a.kecamatan,
-                    COUNT(*) OVER() as total_count
-                FROM products p
-                LEFT JOIN categories c ON p.category_id = c.id
-                LEFT JOIN photos ph ON p.photo_id = ph.id
-                LEFT JOIN prices pr ON p.id = pr.product_id
-                LEFT JOIN users u ON p.seller_id = u.id
-                LEFT JOIN address a ON u.id = a.user_id
-                WHERE p.is_active = 1
-            `;
+    SELECT 
+        p.*, 
+        c.name AS category_name, 
+        ph.photo, 
+        pr.price, 
+        pr.is_discount, 
+        pr.discount_percentage, 
+        pr.discount_price, 
+        pr.start_date, 
+        pr.end_date,
+        a.province,
+        a.kabupaten,
+        a.kecamatan,
+        a.address,        
+        u.name as seller_name,
+        p.massa,
+        COUNT(*) OVER() as total_count
+    FROM products p
+    LEFT JOIN categories c ON p.category_id = c.id
+    LEFT JOIN photos ph ON p.photo_id = ph.id
+    LEFT JOIN prices pr ON p.id = pr.product_id
+    LEFT JOIN users u ON p.seller_id = u.id
+    LEFT JOIN address a ON u.id = a.user_id
+    WHERE p.is_active = 1
+`;
     
             const queryParams = [];
     
@@ -154,13 +157,19 @@ const productController = {
         queryParams.push(limit, offset);
 
         const [products] = await pool.query(query, queryParams);
+
         
         const total = products[0]?.total_count || 0;
 
         res.json({
             success: true,
             data: {
-                products: products.map(p => ({...p, total_count: undefined})),
+                products: products.map(p => ({
+                    ...p,
+                    total_count: undefined,
+                    seller_name: p.seller_name || 'Unknown Seller',
+                    massa: p.massa || 0
+                })),
                 pagination: {
                     page,
                     limit,

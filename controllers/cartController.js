@@ -49,6 +49,60 @@ const cartController = {
     }
   },
 
+  getCartWithSellerDetails: async (req, res) => {
+    try {
+      const userId = req.userData.userId;
+      const [cartRows] = await pool.query(
+        "SELECT * FROM carts WHERE user_id = ?",
+        [userId]
+      );
+
+      let cartId;
+      if (cartRows.length === 0) {
+        const [result] = await pool.query(
+          "INSERT INTO carts (user_id) VALUES (?)",
+          [userId]
+        );
+        cartId = result.insertId;
+      } else {
+        cartId = cartRows[0].id;
+      }
+
+      const [items] = await pool.query(
+        `SELECT 
+          ci.id,
+          ci.product_id,
+          ci.quantity,
+          p.name,
+          p.quantity as stock,
+          ph.photo,
+          pr.price,
+          pr.is_discount,
+          pr.discount_percentage,
+          pr.discount_price,
+          u.name as seller_name,
+          u.phone as seller_phone,
+          a.address as seller_address,
+          a.kecamatan as seller_kecamatan,
+          a.kabupaten as seller_kabupaten,
+          a.province as seller_province
+        FROM cart_items ci
+        JOIN products p ON ci.product_id = p.id
+        JOIN users u ON p.seller_id = u.id
+        JOIN address a ON u.id = a.user_id
+        LEFT JOIN photos ph ON p.photo_id = ph.id
+        LEFT JOIN prices pr ON p.id = pr.product_id
+        WHERE ci.cart_id = ?`,
+        [cartId]
+      );
+
+      res.json({ success: true, data: items });
+    } catch (error) {
+      console.error('Get cart with seller details error:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
   addToCart: async (req, res) => {
     try {
       const userId = req.userData.userId; // Changed from req.user.id

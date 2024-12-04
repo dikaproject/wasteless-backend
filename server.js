@@ -22,6 +22,7 @@ app.use('/api', require('./routes/productRoutes'));
 app.use('/api', require('./routes/cartRoutes'));
 app.use('/api', require('./routes/addressRoutes'));
 app.use('/api/customer', require('./routes/customerRoutes'));
+app.use('/api', require('./routes/contactRoutes'));
 
 schedule.scheduleJob('0 0 * * *', () => {
     updateExpiredProducts();

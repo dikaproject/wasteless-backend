@@ -122,32 +122,57 @@ const transactionsController = {
       );
 
       if (payment_method === 'midtrans') {
+        // Calculate items total for Midtrans
+        const itemsTotal = cartItems.reduce((sum, item) => {
+          const itemPrice = item.is_discount ? item.discount_price : item.price;
+          return sum + (itemPrice * item.quantity);
+        }, 0);
+      
+        // Add PPN as a separate line item
         const parameter = {
           transaction_details: {
             order_id: `ORDER-${transactionId}-${Date.now()}`,
-            gross_amount: total_amount,
+            gross_amount: total_amount, // This should match sum of all items including PPN
           },
           customer_details: {
             email: userDetails[0].email,
             first_name: userDetails[0].name,
           },
-          item_details: cartItems.map(item => ({
-            id: item.product_id.toString(),
-            price: item.is_discount ? item.discount_price : item.price,
-            quantity: item.quantity,
-            name: item.name.substring(0, 50), // Midtrans limits name to 50 chars
-          })),
+          item_details: [
+            ...cartItems.map(item => ({
+              id: item.product_id.toString(),
+              price: item.is_discount ? item.discount_price : item.price,
+              quantity: item.quantity,
+              name: item.name.substring(0, 50),
+            })),
+            // Add PPN as separate item
+            {
+              id: 'PPN',
+              price: ppn,
+              quantity: 1,
+              name: 'PPN (0.7%)'
+            }
+          ],
         };
-
-        const midtransTransaction = await snap.createTransaction(parameter);
-
+      
+        // Verify totals match
+        const midtransTotal = parameter.item_details.reduce((sum, item) => {
+          return sum + (item.price * item.quantity);
+        }, 0);
+      
+        if (midtransTotal !== total_amount) {
+          throw new Error('Total amount mismatch');
+        }
+      
+        const snapResponse = await snap.createTransaction(parameter);
+      
         await connection.query(
           'UPDATE transactions SET midtrans_order_id = ? WHERE id = ?',
           [parameter.transaction_details.order_id, transactionId]
         );
-
+      
         await connection.commit();
-
+      
         return res.status(201).json({
           success: true,
           message: 'Transaction created successfully',
@@ -155,7 +180,7 @@ const transactionsController = {
             transaction_id: transactionId,
             total_amount,
             payment_method,
-            redirect_url: midtransTransaction.redirect_url,
+            snap_token: snapResponse.token // Return token instead of redirect_url
           }
         });
       }
@@ -174,7 +199,12 @@ const transactionsController = {
 
     } catch (error) {
       await connection.rollback();
-      res.status(500).json({ success: false, message: error.message });
+      console.error('Transaction creation error:', error);  // Add detailed logging
+      res.status(500).json({ 
+        success: false, 
+        message: error.message,
+        details: error.stack  // Add stack trace
+      });
     } finally {
       connection.release();
     }
@@ -266,36 +296,49 @@ const transactionsController = {
     try {
       const { id } = req.params;
       const userId = req.userData.userId;
-
+  
       const [transaction] = await pool.query(
-        `SELECT t.*, a.*, 
-                ti.product_id, ti.quantity, ti.price,
-                p.name as product_name, ph.photo
-         FROM transactions t
-         JOIN address a ON t.address_id = a.id
-         JOIN transaction_items ti ON t.id = ti.transaction_id
-         JOIN products p ON ti.product_id = p.id
-         LEFT JOIN photos ph ON p.photo_id = ph.id
-         WHERE t.id = ? AND t.user_id = ?`,
+        `SELECT 
+          t.*,
+          ti.product_id, ti.quantity, ti.price,
+          p.name as product_name,
+          ph.photo,
+          u.name as seller_name,
+          u.phone as seller_phone,
+          sa.address as seller_address,
+          sa.kecamatan as seller_kecamatan,
+          sa.kabupaten as seller_kabupaten
+        FROM transactions t
+        JOIN transaction_items ti ON t.id = ti.transaction_id
+        JOIN products p ON ti.product_id = p.id
+        JOIN users u ON p.seller_id = u.id
+        JOIN address sa ON u.id = sa.user_id
+        LEFT JOIN photos ph ON p.photo_id = ph.id
+        WHERE t.id = ? AND t.user_id = ?`,
         [id, userId]
       );
-
+  
       if (transaction.length === 0) {
         return res.status(404).json({
           success: false,
           message: 'Transaction not found'
         });
       }
-
+  
       // Format response
       const items = transaction.map(item => ({
         product_id: item.product_id,
         product_name: item.product_name,
         quantity: item.quantity,
         price: item.price,
-        photo: item.photo
+        photo: item.photo,
+        seller_name: item.seller_name,
+        seller_phone: item.seller_phone,
+        seller_address: item.seller_address,
+        seller_kecamatan: item.seller_kecamatan,
+        seller_kabupaten: item.seller_kabupaten
       }));
-
+  
       const response = {
         id: transaction[0].id,
         total_amount: transaction[0].total_amount,
@@ -304,20 +347,14 @@ const transactionsController = {
         payment_status: transaction[0].payment_status,
         status: transaction[0].status,
         created_at: transaction[0].created_at,
-        address: {
-          kabupaten: transaction[0].kabupaten,
-          kecamatan: transaction[0].kecamatan,
-          address: transaction[0].address,
-          code_pos: transaction[0].code_pos
-        },
         items
       };
-
+  
       res.json({
         success: true,
         data: response
       });
-
+  
     } catch (error) {
       res.status(500).json({
         success: false,
