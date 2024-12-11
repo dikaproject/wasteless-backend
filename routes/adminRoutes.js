@@ -872,60 +872,62 @@ router.put('/orders/:id/status', async (req, res) => {
 
 // Analytics ( cek grafik transaksi) -> /analytics
 router.get('/analytics', async (req, res) => {
-    try {
-        // Get daily revenue for the last 30 days
-        const [dailyRevenue] = await pool.query(`
-            SELECT DATE(created_at) as date,
-                   COUNT(*) as total_orders,
-                   SUM(total_amount) as revenue
-            FROM transactions
-            WHERE payment_status = 'paid'
-            AND created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)
-            GROUP BY DATE(created_at)
-            ORDER BY date DESC
-        `);
+  try {
+    const [dailyRevenue] = await pool.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as total_orders,
+        CAST(SUM(total_amount) AS DECIMAL(10,2)) as revenue
+      FROM transactions
+      WHERE payment_status = 'paid'
+      AND created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 30 DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY date DESC
+    `);
 
-        // Get top selling products
-        const [topProducts] = await pool.query(`
-            SELECT p.name,
-                   COUNT(ti.id) as total_sold,
-                   SUM(ti.quantity) as units_sold,
-                   SUM(ti.price * ti.quantity) as revenue
-            FROM transaction_items ti
-            JOIN products p ON ti.product_id = p.id
-            JOIN transactions t ON ti.transaction_id = t.id
-            WHERE t.payment_status = 'paid'
-            GROUP BY p.id
-            ORDER BY units_sold DESC
-            LIMIT 10
-        `);
+    // Update top products query
+    const [topProducts] = await pool.query(`
+      SELECT 
+        p.name,
+        COUNT(ti.id) as total_sold,
+        SUM(ti.quantity) as units_sold,
+        CAST(SUM(ti.price * ti.quantity) AS DECIMAL(10,2)) as revenue
+      FROM transaction_items ti
+      JOIN products p ON ti.product_id = p.id
+      JOIN transactions t ON ti.transaction_id = t.id
+      WHERE t.payment_status = 'paid'
+      GROUP BY p.id
+      ORDER BY units_sold DESC
+      LIMIT 10
+    `);
 
-        // Get sales by category
-        const [categoryStats] = await pool.query(`
-            SELECT c.name,
-                   COUNT(DISTINCT t.id) as total_orders,
-                   SUM(ti.quantity) as units_sold,
-                   SUM(ti.price * ti.quantity) as revenue
-            FROM categories c
-            JOIN products p ON c.id = p.category_id
-            JOIN transaction_items ti ON p.id = ti.product_id
-            JOIN transactions t ON ti.transaction_id = t.id
-            WHERE t.payment_status = 'paid'
-            GROUP BY c.id
-            ORDER BY revenue DESC
-        `);
+    // Update category stats query
+    const [categoryStats] = await pool.query(`
+      SELECT 
+        c.name,
+        COUNT(DISTINCT t.id) as total_orders,
+        SUM(ti.quantity) as units_sold,
+        CAST(SUM(ti.price * ti.quantity) AS DECIMAL(10,2)) as revenue
+      FROM categories c
+      JOIN products p ON c.id = p.category_id
+      JOIN transaction_items ti ON p.id = ti.product_id
+      JOIN transactions t ON ti.transaction_id = t.id
+      WHERE t.payment_status = 'paid'
+      GROUP BY c.id
+      ORDER BY revenue DESC
+    `);
 
-        res.json({
-            success: true,
-            data: {
-                dailyRevenue,
-                topProducts,
-                categoryStats
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
+    res.json({
+      success: true,
+      data: {
+        dailyRevenue,
+        topProducts,
+        categoryStats
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 // Get detailed analytics by date range

@@ -40,38 +40,38 @@ const sellerProductController = {
       const sellerId = req.userData.userId;
 
       const [products] = await pool.query(
-        `
+        `SELECT 
+          p.*,
+          c.name as category_name,
+          ph.photo,
+          pr.price,
+          pr.is_discount,
+          pr.discount_percentage,
+          pr.discount_price,
+          pr.start_date,
+          pr.end_date
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        LEFT JOIN photos ph ON p.photo_id = ph.id
+        LEFT JOIN (
           SELECT 
-            p.*,
-            c.name as category_name,
-            ph.photo,
-            pr.price,
-            pr.is_discount,
-            pr.discount_percentage,
-            pr.discount_price,
-            pr.start_date,
-            pr.end_date
-          FROM products p
-          LEFT JOIN categories c ON p.category_id = c.id
-          LEFT JOIN photos ph ON p.photo_id = ph.id
-          LEFT JOIN (
-            SELECT 
-              product_id,
-              price,
-              is_discount,
-              discount_percentage,
-              discount_price,
-              start_date,
-              end_date
-            FROM prices 
-            WHERE (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP)
-            AND (end_date IS NULL OR end_date >= CURRENT_TIMESTAMP)
-            ORDER BY created_at DESC
-          ) pr ON p.id = pr.product_id
-          WHERE p.seller_id = ?
-          ORDER BY p.created_at DESC
-          LIMIT ? OFFSET ?
-        `,
+            product_id,
+            price,
+            is_discount,
+            discount_percentage,
+            discount_price,
+            start_date,
+            end_date
+          FROM prices 
+          WHERE id IN (
+            SELECT MAX(id)
+            FROM prices
+            GROUP BY product_id
+          )
+        ) pr ON p.id = pr.product_id
+        WHERE p.seller_id = ?
+        ORDER BY p.created_at DESC
+        LIMIT ? OFFSET ?`,
         [sellerId, limit, offset]
       );
 
@@ -466,10 +466,16 @@ const sellerProductController = {
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
         LEFT JOIN photos ph ON p.photo_id = ph.id
-        LEFT JOIN prices pr ON p.id = pr.product_id
-        WHERE p.id = ? AND p.seller_id = ?
-        ORDER BY pr.created_at DESC
-        LIMIT 1`,
+        LEFT JOIN (
+          SELECT *
+          FROM prices
+          WHERE id IN (
+            SELECT MAX(id)
+            FROM prices
+            GROUP BY product_id
+          )
+        ) pr ON p.id = pr.product_id
+        WHERE p.id = ? AND p.seller_id = ?`,
         [id, sellerId]
       );
 

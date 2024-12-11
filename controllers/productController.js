@@ -74,31 +74,46 @@ const productController = {
             const sort = req.query.sort || 'latest';
     
             let query = `
-    SELECT 
-        p.*, 
-        c.name AS category_name, 
-        ph.photo, 
-        pr.price, 
-        pr.is_discount, 
-        pr.discount_percentage, 
-        pr.discount_price, 
-        pr.start_date, 
-        pr.end_date,
-        a.province,
-        a.kabupaten,
-        a.kecamatan,
-        a.address,        
-        u.name as seller_name,
-        p.massa,
-        COUNT(*) OVER() as total_count
-    FROM products p
-    LEFT JOIN categories c ON p.category_id = c.id
-    LEFT JOIN photos ph ON p.photo_id = ph.id
-    LEFT JOIN prices pr ON p.id = pr.product_id
-    LEFT JOIN users u ON p.seller_id = u.id
-    LEFT JOIN address a ON u.id = a.user_id
-    WHERE p.is_active = 1
-`;
+                SELECT 
+                    p.*, 
+                    c.name AS category_name, 
+                    ph.photo, 
+                    COALESCE(pr.price, 0) as price,
+                    pr.is_discount, 
+                    pr.discount_percentage, 
+                    COALESCE(pr.discount_price, 0) as discount_price, 
+                    pr.start_date, 
+                    pr.end_date,
+                    a.province,
+                    a.kabupaten,
+                    a.kecamatan,
+                    a.address,
+                    u.name as seller_name,
+                    COUNT(*) OVER() as total_count
+                FROM products p
+                LEFT JOIN categories c ON p.category_id = c.id
+                LEFT JOIN photos ph ON p.photo_id = ph.id
+                LEFT JOIN (
+                    SELECT 
+                        product_id,
+                        price,
+                        is_discount,
+                        discount_percentage,
+                        discount_price,
+                        start_date,
+                        end_date
+                    FROM prices
+                    WHERE id IN (
+                        SELECT MAX(id)
+                        FROM prices
+                        GROUP BY product_id
+                    )
+                ) pr ON p.id = pr.product_id
+                LEFT JOIN users u ON p.seller_id = u.id
+                LEFT JOIN address a ON u.id = a.user_id
+                WHERE p.is_active = 1
+            `;
+    
     
             const queryParams = [];
     
