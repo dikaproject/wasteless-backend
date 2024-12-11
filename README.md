@@ -90,7 +90,22 @@ Link Demo Website : https://wasteless.intechsosmed.my.id
 ---
 
 ## Reminder 
-- if error Unhandled Runtime Error ChunkLoadError use **incognito** or **refresh the page**
+- If error Unhandled Runtime Error ChunkLoadError use **incognito** or **refresh the page**
+- Database SQL file is included in the repository - import it to get all existing data
+- Product images may not appear for existing products since image files are not pushed to GitHub
+  - Best practice: Create new products to ensure images are properly displayed
+- Server mirrors our development environment:
+  - Some products might show without images
+  - For best experience, create new products through the seller dashboard
+
+## Important Notes for Development
+- After cloning, create these directories:
+  ```bash
+  mkdir uploads
+  cd uploads
+  mkdir products
+  mkdir ktp
+  mkdir usaha
 
 ## Features
 
