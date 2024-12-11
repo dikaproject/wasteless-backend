@@ -16,22 +16,92 @@ router.use(checkRole(['admin']));
 
 // Update admin dashboard route
 router.get('/dashboard', async (req, res) => {
+    const connection = await pool.getConnection();
     try {
-        // Get total orders
-        const [orders] = await pool.query(`
-            SELECT COUNT(*) as total, 
-                   SUM(CASE WHEN payment_status = 'paid' THEN total_amount ELSE 0 END) as revenue
-            FROM transactions
+        // Get current month's data
+        const [currentMonthData] = await connection.query(`
+            SELECT 
+                COUNT(*) as total_orders,
+                SUM(total_amount) as revenue
+            FROM transactions 
+            WHERE YEAR(created_at) = YEAR(CURRENT_DATE)
+            AND MONTH(created_at) = MONTH(CURRENT_DATE)
+            AND payment_status = 'paid'
         `);
 
-        // Get total products
-        const [products] = await pool.query('SELECT COUNT(*) as total FROM products');
+        // Get previous month's data
+        const [previousMonthData] = await connection.query(`
+            SELECT 
+                COUNT(*) as total_orders,
+                SUM(total_amount) as revenue
+            FROM transactions 
+            WHERE YEAR(created_at) = YEAR(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+            AND MONTH(created_at) = MONTH(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+            AND payment_status = 'paid'
+        `);
 
-        // Get total users
-        const [users] = await pool.query('SELECT COUNT(*) as total FROM users WHERE role = "user"');
+        // Calculate month-over-month changes
+        const revenueTrend = previousMonthData[0].revenue > 0 
+            ? ((currentMonthData[0].revenue - previousMonthData[0].revenue) / previousMonthData[0].revenue) * 100
+            : 0;
 
-        // Get recent orders
-        const [recentOrders] = await pool.query(`
+        const ordersTrend = previousMonthData[0].total_orders > 0
+            ? ((currentMonthData[0].total_orders - previousMonthData[0].total_orders) / previousMonthData[0].total_orders) * 100
+            : 0;
+
+        // Get products trend
+        const [currentMonthProducts] = await connection.query(`
+            SELECT COUNT(*) as total
+            FROM products
+            WHERE YEAR(created_at) = YEAR(CURRENT_DATE)
+            AND MONTH(created_at) = MONTH(CURRENT_DATE)
+            AND is_active = 1
+        `);
+
+        const [previousMonthProducts] = await connection.query(`
+            SELECT COUNT(*) as total
+            FROM products
+            WHERE YEAR(created_at) = YEAR(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+            AND MONTH(created_at) = MONTH(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+            AND is_active = 1
+        `);
+
+        const productsTrend = previousMonthProducts[0].total > 0
+            ? ((currentMonthProducts[0].total - previousMonthProducts[0].total) / previousMonthProducts[0].total) * 100
+            : 0;
+
+        // Get users trend
+        const [currentMonthUsers] = await connection.query(`
+            SELECT COUNT(*) as total
+            FROM users
+            WHERE YEAR(created_at) = YEAR(CURRENT_DATE)
+            AND MONTH(created_at) = MONTH(CURRENT_DATE)
+            AND role = 'user'
+        `);
+
+        const [previousMonthUsers] = await connection.query(`
+            SELECT COUNT(*) as total
+            FROM users
+            WHERE YEAR(created_at) = YEAR(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+            AND MONTH(created_at) = MONTH(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+            AND role = 'user'
+        `);
+
+        const usersTrend = previousMonthUsers[0].total > 0
+            ? ((currentMonthUsers[0].total - previousMonthUsers[0].total) / previousMonthUsers[0].total) * 100
+            : 0;
+
+        // Get totals
+        const [totalStats] = await connection.query(`
+            SELECT
+                (SELECT COUNT(*) FROM transactions WHERE payment_status = 'paid') as total_orders,
+                (SELECT SUM(total_amount) FROM transactions WHERE payment_status = 'paid') as total_revenue,
+                (SELECT COUNT(*) FROM products WHERE is_active = 1) as total_products,
+                (SELECT COUNT(*) FROM users WHERE role = 'user') as total_users
+        `);
+
+        // Get recent data
+        const [recentOrders] = await connection.query(`
             SELECT t.*, u.name as user_name, 
                    COUNT(ti.id) as total_items
             FROM transactions t
@@ -42,8 +112,7 @@ router.get('/dashboard', async (req, res) => {
             LIMIT 5
         `);
 
-        // Get recent users
-        const [recentUsers] = await pool.query(`
+        const [recentUsers] = await connection.query(`
             SELECT id, name, email, created_at
             FROM users
             WHERE role = 'user'
@@ -51,25 +120,46 @@ router.get('/dashboard', async (req, res) => {
             LIMIT 5
         `);
 
+        const [recentSellers] = await connection.query(`
+            SELECT u.id, u.name, u.email, u.phone, u.created_at, 
+                   a.photo_ktp, a.photo_usaha
+            FROM users u
+            JOIN address a ON u.id = a.user_id
+            WHERE u.role = 'seller' 
+            AND u.is_active = FALSE
+            ORDER BY u.created_at DESC
+            LIMIT 5
+        `);
+
         const stats = {
-            totalOrders: orders[0].total,
-            totalProducts: products[0].total,
-            totalUsers: users[0].total,
-            totalRevenue: orders[0].revenue || 0,
+            totalOrders: totalStats[0].total_orders || 0,
+            totalProducts: totalStats[0].total_products || 0,
+            totalUsers: totalStats[0].total_users || 0,
+            totalRevenue: totalStats[0].total_revenue || 0,
+            trends: {
+                revenue: parseFloat(revenueTrend.toFixed(1)),
+                orders: parseFloat(ordersTrend.toFixed(1)),
+                products: parseFloat(productsTrend.toFixed(1)),
+                users: parseFloat(usersTrend.toFixed(1))
+            },
             recentOrders,
-            recentUsers
+            recentUsers,
+            recentSellers
         };
 
         res.json({
             success: true,
             data: stats
         });
+
     } catch (error) {
         console.error('Dashboard Error:', error);
         res.status(500).json({
             success: false,
             message: 'Error fetching dashboard data'
         });
+    } finally {
+        connection.release();
     }
 });
 
@@ -214,18 +304,137 @@ router.get('/pending-sellers', async (req, res) => {
   }
 });
 
+// adminRoutes.js - Update approve-seller route
 router.put('/approve-seller/:id', async (req, res) => {
+  const connection = await pool.getConnection();
   try {
+    await connection.beginTransaction();
+    
     const { id } = req.params;
 
-    await pool.query(
+    // Debug log
+    console.log('Approving seller:', id);
+
+    // Get seller details with better error handling
+    const [seller] = await connection.query(
+      `SELECT email, name, id FROM users WHERE id = ?`,
+      [id]
+    );
+
+    if (!seller.length) {
+      throw new Error('Seller not found');
+    }
+
+    console.log('Seller found:', seller[0]);
+
+    // Update user status
+    await connection.query(
       `UPDATE users SET is_active = TRUE WHERE id = ?`,
       [id]
     );
 
+    // Verify email configuration
+    const emailConfig = {
+      host: process.env.MAIL_HOST,
+      port: process.env.MAIL_PORT,
+      username: process.env.MAIL_USERNAME,
+      password: process.env.MAIL_PASSWORD,
+      from: process.env.MAIL_FROM,
+      fromName: process.env.MAIL_FROM_NAME
+    };
+
+    console.log('Email configuration:', {
+      ...emailConfig,
+      password: '***hidden***'
+    });
+
+    // Send email with detailed error catching
+    try {
+      const mailResponse = await transporter.sendMail({
+        from: {
+          name: process.env.MAIL_FROM_NAME || 'WasteLess',
+          address: process.env.MAIL_FROM
+        },
+        to: seller[0].email,
+        subject: 'Welcome to WasteLess - Seller Application Approved! 🎉',
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { text-align: center; margin-bottom: 30px; }
+              .content { background: #f9f9f9; padding: 20px; border-radius: 8px; }
+              .button { 
+                background: #16a34a;
+                color: white !important;
+                padding: 12px 25px;
+                text-decoration: none;
+                border-radius: 5px;
+                display: inline-block;
+                margin-top: 20px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1 style="color: #16a34a;">Welcome to WasteLess! 🌱</h1>
+              </div>
+              <div class="content">
+                <p>Dear ${seller[0].name},</p>
+                <p>Great news! Your seller application has been approved. You can now start selling on WasteLess.</p>
+                <p>Here's what you can do next:</p>
+                <ul>
+                  <li>Set up your seller profile</li>
+                  <li>Add your products</li>
+                  <li>Start reaching customers</li>
+                </ul>
+                <div style="text-align: center;">
+                  <a href="${process.env.NEXT_PUBLIC_URL}/login" class="button">
+                    Go to Seller Dashboard
+                  </a>
+                </div>
+              </div>
+              <div style="text-align: center; margin-top: 30px; color: #666;">
+                <p>Need help? Contact our support team</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
+      });
+
+      console.log('Email sent successfully:', mailResponse);
+    } catch (emailError) {
+      console.error('Email send error details:', {
+        error: emailError.message,
+        stack: emailError.stack,
+        code: emailError.code,
+        command: emailError.command
+      });
+      
+      // Don't throw, just log the error
+      console.warn('Failed to send approval email but continuing with approval');
+    }
+
+    await connection.commit();
     res.json({ success: true, message: 'Seller approved successfully' });
+
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    await connection.rollback();
+    console.error('Approve seller error:', {
+      error: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to approve seller' 
+    });
+  } finally {
+    connection.release();
   }
 });
 
@@ -273,16 +482,56 @@ router.delete('/reject-seller/:id', async (req, res) => {
 
     // Send rejection email
     await transporter.sendMail({
-      from: process.env.MAIL_FROM,
-      to: seller[0].email,
-      subject: 'Seller Application Rejected',
-      html: `
-        <h1>Application Rejected</h1>
-        <p>Hello ${seller[0].name},</p>
-        <p>We regret to inform you that your seller application has been rejected.</p>
-        <p>Reason: ${reason}</p>
-      `
-    });
+        from: {
+          name: process.env.MAIL_FROM_NAME,
+          address: process.env.MAIL_FROM
+        },
+        to: seller[0].email,
+        subject: 'WasteLess Seller Application Update',
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { text-align: center; margin-bottom: 30px; }
+              .content { background: #f9f9f9; padding: 20px; border-radius: 8px; }
+              .reason { 
+                background: #fff;
+                padding: 15px;
+                border-left: 4px solid #dc2626;
+                margin: 20px 0;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1 style="color: #4b5563;">Application Status Update</h1>
+              </div>
+              <div class="content">
+                <p>Dear ${seller[0].name},</p>
+                <p>Thank you for your interest in becoming a seller on WasteLess.</p>
+                <p>After careful review, we regret to inform you that we cannot approve your seller application at this time.</p>
+                
+                <div class="reason">
+                  <strong>Reason:</strong>
+                  <p>${reason}</p>
+                </div>
+  
+                <p>You can submit a new application after addressing these concerns.</p>
+                <p>If you have any questions, please don't hesitate to contact us.</p>
+              </div>
+              <div style="text-align: center; margin-top: 30px; color: #666;">
+                <p>Best regards,<br>The WasteLess Team</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
+      });
 
     await connection.commit();
     res.json({ success: true, message: 'Seller rejected successfully' });

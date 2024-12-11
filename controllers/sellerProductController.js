@@ -233,30 +233,21 @@ const sellerProductController = {
   update: async (req, res) => {
     const connection = await pool.getConnection();
     try {
-      await connection.beginTransaction();
-
-      const { id } = req.params;
-      const sellerId = req.userData.userId;
-
-      const [existingProduct] = await connection.query(
-        "SELECT p.*, ph.photo FROM products p LEFT JOIN photos ph ON p.photo_id = ph.id WHERE p.id = ? AND p.seller_id = ?",
-        [id, sellerId]
-      );
-
-      if (existingProduct.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "Product not found or unauthorized",
-        });
-      }
-
+      // Handle file upload
       await new Promise((resolve, reject) => {
         upload(req, res, (err) => {
           if (err) reject(err);
-          resolve();
+          else resolve();
         });
       });
-
+  
+      await connection.beginTransaction();
+      console.log('Update request body:', req.body);
+  
+      const { id } = req.params;
+      const sellerId = req.userData.userId;
+  
+      // Parse and validate form data
       const {
         name,
         category_id,
@@ -265,128 +256,255 @@ const sellerProductController = {
         expired,
         price,
         is_discount,
-        discount_percentage,
-        discount_start_date,
-        discount_end_date,
+        discount,
+        start_date,
+        end_date,
       } = req.body;
-
-      // Handle new photo
-      let photoId = existingProduct[0].photo_id;
-      if (req.file) {
-        // Delete old photo if exists
-        if (existingProduct[0].photo) {
-          await fs
-            .unlink(path.join("./uploads/products", existingProduct[0].photo))
-            .catch((err) => console.error("Error removing old photo:", err));
+  
+      // Check for required fields
+      const requiredFields = { name, category_id, quantity, massa, expired, price };
+      for (const [field, value] of Object.entries(requiredFields)) {
+        if (!value) {
+          throw new Error(`Field ${field} is required`);
         }
-
-        const [photoResult] = await connection.query(
-          "INSERT INTO photos (product_id, photo) VALUES (?, ?)",
-          [id, req.file.filename]
-        );
-        photoId = photoResult.insertId;
       }
-
-      // Update product
-      await connection.query(
-        `
-                UPDATE products 
-                SET name = ?, category_id = ?, photo_id = ?, 
-                    quantity = ?, massa = ?, expired = ?, is_active = 0
-                WHERE id = ? AND seller_id = ?
-            `,
-        [name, category_id, photoId, quantity, massa, expired, id, sellerId]
+  
+      // Verify product ownership
+      const [existingProduct] = await connection.query(
+        `SELECT * FROM products WHERE id = ? AND seller_id = ?`,
+        [id, sellerId]
       );
-
-      // Calculate and update price/discount
-      let discountPrice = 0;
-      if (is_discount === "true") {
-        discountPrice = Math.floor(price - price * (discount_percentage / 100));
+  
+      if (existingProduct.length === 0) {
+        throw new Error('Product not found or unauthorized');
       }
-
+  
+      // Update product details
       await connection.query(
-        `
-                UPDATE prices 
-                SET price = ?, is_discount = ?, discount_percentage = ?,
-                    discount_price = ?, start_date = ?, end_date = ?
-                WHERE product_id = ?
-            `,
+        `UPDATE products 
+         SET name = ?,
+             category_id = ?,
+             quantity = ?,
+             massa = ?,
+             expired = ?
+         WHERE id = ? AND seller_id = ?`,
+        [name, category_id, quantity, massa, expired, id, sellerId]
+      );
+  
+      // Handle photo update
+      if (req.file) {
+        // Delete old photo file
+        const [oldPhoto] = await connection.query(
+          `SELECT ph.photo FROM photos ph
+           INNER JOIN products p ON ph.id = p.photo_id
+           WHERE p.id = ?`,
+          [id]
+        );
+  
+        if (oldPhoto.length > 0 && oldPhoto[0].photo) {
+          await fs.unlink(path.join('./uploads/products', oldPhoto[0].photo))
+            .catch(err => console.error('Error removing old photo:', err));
+        }
+  
+        // Insert new photo
+        const [photoResult] = await connection.query(
+          'INSERT INTO photos (photo) VALUES (?)',
+          [req.file.filename]
+        );
+        await connection.query(
+          'UPDATE products SET photo_id = ? WHERE id = ?',
+          [photoResult.insertId, id]
+        );
+      }
+  
+      // Delete old price data
+      await connection.query(
+        `DELETE FROM prices WHERE product_id = ?`,
+        [id]
+      );
+  
+      // Calculate discount details
+      const priceValue = parseFloat(price);
+      const isDiscounted = is_discount === 'true';
+      const discountPercentage = isDiscounted ? parseFloat(discount) : 0;
+      const discountPrice = isDiscounted
+        ? Math.floor(priceValue - (priceValue * (discountPercentage / 100)))
+        : null;
+  
+      // Insert new price data
+      await connection.query(
+        `INSERT INTO prices 
+         (product_id, price, is_discount, discount_percentage, discount_price, start_date, end_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
-          price,
-          is_discount === "true",
-          is_discount === "true" ? discount_percentage : 0,
-          discountPrice,
-          is_discount === "true" ? discount_start_date : null,
-          is_discount === "true" ? discount_end_date : null,
           id,
+          priceValue,
+          isDiscounted,
+          discountPercentage,
+          discountPrice,
+          isDiscounted ? start_date : null,
+          isDiscounted ? end_date : null,
         ]
       );
-
+  
       await connection.commit();
       res.json({
         success: true,
-        message: "Product updated and pending approval",
+        message: 'Product updated successfully',
       });
     } catch (error) {
       await connection.rollback();
+      console.error('Product update error:', error);
+  
+      // Remove uploaded file if any
       if (req.file) {
-        await fs
-          .unlink(path.join("./uploads/products", req.file.filename))
-          .catch((err) => console.error("Error removing uploaded file:", err));
+        await fs.unlink(path.join('./uploads/products', req.file.filename))
+          .catch(err => console.error('Error removing uploaded file:', err));
       }
-      res.status(500).json({ success: false, message: error.message });
+  
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to update product',
+      });
     } finally {
       connection.release();
     }
   },
 
-  // Delete remains mostly the same but with improved photo cleanup
   delete: async (req, res) => {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-
+  
       const { id } = req.params;
       const sellerId = req.userData.userId;
-
-      // Get product with photo information
+  
+      // Get product details
       const [product] = await connection.query(
-        "SELECT p.*, ph.photo FROM products p LEFT JOIN photos ph ON p.photo_id = ph.id WHERE p.id = ? AND p.seller_id = ?",
+        `SELECT p.*, ph.photo, ph.id as photo_id 
+         FROM products p 
+         LEFT JOIN photos ph ON p.photo_id = ph.id 
+         WHERE p.id = ? AND p.seller_id = ?`,
         [id, sellerId]
       );
-
+  
       if (product.length === 0) {
         return res.status(404).json({
           success: false,
-          message: "Product not found or unauthorized",
+          message: "Product not found or unauthorized"
         });
       }
-
-      // Delete photo file if exists
-      if (product[0].photo) {
-        await fs
-          .unlink(path.join("./uploads/products", product[0].photo))
-          .catch((err) => console.error("Error removing product photo:", err));
+  
+      // Delete in correct order to handle foreign key constraints:
+      // 1. Delete prices (no FK constraint)
+      await connection.query('DELETE FROM prices WHERE product_id = ?', [id]);
+  
+      // 2. Set photo_id to NULL in products
+      if (product[0].photo_id) {
+        await connection.query(
+          'UPDATE products SET photo_id = NULL WHERE id = ?',
+          [id]
+        );
       }
-
-      // Delete product (cascade will handle related records)
+  
+      // 3. Delete product
       await connection.query(
-        "DELETE FROM products WHERE id = ? AND seller_id = ?",
+        'DELETE FROM products WHERE id = ? AND seller_id = ?',
         [id, sellerId]
       );
-
+  
+      // 4. Handle photo cleanup
+      if (product[0].photo_id) {
+        // Delete photo file
+        if (product[0].photo) {
+          const photoPath = path.join('./uploads/products', product[0].photo);
+          try {
+            await fs.unlink(photoPath);
+          } catch (err) {
+            console.error('Error deleting photo file:', err);
+          }
+        }
+        
+        // Delete photo record
+        await connection.query('DELETE FROM photos WHERE id = ?', [product[0].photo_id]);
+      }
+  
       await connection.commit();
       res.json({
         success: true,
-        message: "Product deleted successfully",
+        message: "Product deleted successfully"
       });
+  
     } catch (error) {
       await connection.rollback();
-      res.status(500).json({ success: false, message: error.message });
+      console.error('Delete product error:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: error.message || 'Failed to delete product'
+      });
     } finally {
       connection.release();
     }
   },
+
+  getDetail: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const sellerId = req.userData.userId;
+
+      const [product] = await pool.query(
+        `SELECT 
+          p.*,
+          c.name as category_name,
+          ph.photo,
+          pr.price,
+          pr.is_discount,
+          pr.discount_percentage,
+          pr.discount_price,
+          pr.start_date,
+          pr.end_date
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        LEFT JOIN photos ph ON p.photo_id = ph.id
+        LEFT JOIN prices pr ON p.id = pr.product_id
+        WHERE p.id = ? AND p.seller_id = ?
+        ORDER BY pr.created_at DESC
+        LIMIT 1`,
+        [id, sellerId]
+      );
+
+      if (!product.length) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found or unauthorized'
+        });
+      }
+
+      // Format response
+      const formattedProduct = {
+        ...product[0],
+        photo: product[0].photo || null,
+        price: product[0].price || 0,
+        is_discount: Boolean(product[0].is_discount),
+        discount_percentage: product[0].discount_percentage || 0,
+        discount_price: product[0].discount_price || 0,
+        start_date: product[0].start_date,
+        end_date: product[0].end_date
+      };
+
+      res.json({
+        success: true,
+        data: formattedProduct
+      });
+
+    } catch (error) {
+      console.error('Get product detail error:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: error.message 
+      });
+    }
+  }
 };
 
 module.exports = { sellerProductController };

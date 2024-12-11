@@ -25,7 +25,7 @@ async function updateExpiredProducts() {
 
         // Get 'Pupuk' category ID
         const [pupukCategory] = await connection.query(
-            "SELECT id FROM categories WHERE name = 'Pupuk' LIMIT 1"
+            "SELECT id FROM categories WHERE name = 'Expired' LIMIT 1"
         );
 
         if (!pupukCategory.length) {
