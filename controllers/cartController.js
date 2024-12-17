@@ -75,6 +75,7 @@ const cartController = {
           ci.quantity,
           p.name,
           p.quantity as stock,
+          p.expired,
           ph.photo,
           pr.price,
           pr.is_discount,
@@ -96,6 +97,7 @@ const cartController = {
         [cartId]
       );
 
+      console.log("Cart items with expiry:", items); // Debug log
       res.json({ success: true, data: items });
     } catch (error) {
       console.error('Get cart with seller details error:', error);
@@ -330,11 +332,11 @@ const cartController = {
         "SELECT * FROM carts WHERE user_id = ?",
         [userId]
       );
-      
+
       if (cartRows.length === 0) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Cart not found" 
+        return res.status(400).json({
+          success: false,
+          message: "Cart not found"
         });
       }
 
@@ -345,14 +347,14 @@ const cartController = {
         [cartId]
       );
 
-      res.json({ 
-        success: true, 
-        message: "Cart cleared successfully" 
+      res.json({
+        success: true,
+        message: "Cart cleared successfully"
       });
     } catch (error) {
       console.error('Clear cart error:', error);
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         message: error.message || 'Failed to clear cart'
       });
     }
