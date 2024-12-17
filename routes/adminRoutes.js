@@ -62,7 +62,7 @@ router.get('/dashboard', async (req, res) => {
             SELECT COUNT(*) as total
             FROM products
             WHERE YEAR(created_at) = YEAR(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
-            AND MONTH(created_at) = MONTH(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+            AND MONTH(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
             AND is_active = 1
         `);
 
@@ -83,7 +83,7 @@ router.get('/dashboard', async (req, res) => {
             SELECT COUNT(*) as total
             FROM users
             WHERE YEAR(created_at) = YEAR(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
-            AND MONTH(created_at) = MONTH(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
+            AND MONTH(DATE_SUB(CURRENT_DATE, INTERVAL 1 MONTH))
             AND role = 'user'
         `);
 
@@ -175,7 +175,87 @@ router.get('/products', productController.getAll);
 router.post('/products', productController.create);
 router.put('/products/:id', productController.update);
 router.get('/products/:id', productController.getDetail);
-router.delete('/products/:id', productController.delete);
+router.delete('/products/:id', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const { id } = req.params;
+
+    // First, check if the product exists and get its photo information
+    const [product] = await connection.query(
+      'SELECT p.*, ph.photo FROM products p LEFT JOIN photos ph ON p.photo_id = ph.id WHERE p.id = ?',
+      [id]
+    );
+
+    if (product.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    // Delete related records in transaction_items
+    await connection.query(
+      'DELETE FROM transaction_items WHERE product_id = ?',
+      [id]
+    );
+
+    // Delete related records in prices
+    await connection.query(
+      'DELETE FROM prices WHERE product_id = ?',
+      [id]
+    );
+
+    // Delete photos if exists
+    if (product[0].photo_id) {
+      // First update product to remove photo_id reference
+      await connection.query(
+        'UPDATE products SET photo_id = NULL WHERE id = ?',
+        [id]
+      );
+
+      // Then delete the photo record
+      await connection.query(
+        'DELETE FROM photos WHERE id = ?',
+        [product[0].photo_id]
+      );
+
+      // Delete physical file if it exists
+      if (product[0].photo) {
+        try {
+          const photoPath = path.join('./uploads/products', product[0].photo);
+          await fs.unlink(photoPath);
+        } catch (err) {
+          console.warn('Could not delete photo file:', err);
+          // Continue with deletion even if file removal fails
+        }
+      }
+    }
+
+    // Finally delete the product
+    await connection.query(
+      'DELETE FROM products WHERE id = ?',
+      [id]
+    );
+
+    await connection.commit();
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+
+  } catch (error) {
+    await connection.rollback();
+    console.error('Delete product error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete product. Please try again.'
+    });
+  } finally {
+    connection.release();
+  }
+});
 
 // User routes
 router.get('/users', usersController.getAll);
